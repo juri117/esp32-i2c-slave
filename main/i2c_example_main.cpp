@@ -1,25 +1,9 @@
-/* i2c - Example
-
-   For other examples please check:
-   https://github.com/espressif/esp-idf/tree/master/examples
-
-   See README.md file to get detailed usage of this example.
-
-   This example code is in the Public Domain (or CC0 licensed, at your option.)
-
-   Unless required by applicable law or agreed to in writing, this
-   software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
-   CONDITIONS OF ANY KIND, either express or implied.
-*/
 #include <stdio.h>
 #include "driver/i2c.h"
 #include "esp_log.h"
 #include "sdkconfig.h"
 
 static const char *TAG = "i2c-example";
-
-#define _I2C_NUMBER(num) I2C_NUM_##num
-#define I2C_NUMBER(num) _I2C_NUMBER(num)
 
 #define DATA_LENGTH 512    /*!< Data buffer length of test buffer */
 #define RW_TEST_LENGTH 128 /*!< Data length for r/w test, [0,DATA_LENGTH] */
