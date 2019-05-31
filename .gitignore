@@ -1,0 +1,7 @@
+**/build/
+build/
+.vscode/
+.git
+**/*.tar.gz
+**/*.projbuild
+trash
