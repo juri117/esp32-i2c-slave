@@ -27,6 +27,8 @@ static const char *TAG = "i2c-slave";
 #define ACK_VAL 0x0       /*!< I2C ack value */
 #define NACK_VAL 0x1      /*!< I2C nack value */
 
+#define SLAVE_REQUEST_WAIT_MS 80
+
 const uint8_t testCmd[10] = {0x00, 0x01, 0x02, 0x03, 0x04,
                              0x05, 0x06, 0x07, 0x08, 0x09};
 
@@ -74,7 +76,7 @@ bool check_for_data() {
       i2c_slave_write_buffer(I2C_SLAVE_NUM, replBuff, 2,
                              1000 / portTICK_RATE_MS);
       ESP_LOGI(TAG, "got len request, put(%d):", outBuffLen);
-      vTaskDelay(pdMS_TO_TICKS(200));
+      vTaskDelay(pdMS_TO_TICKS(SLAVE_REQUEST_WAIT_MS));
       // ESP_LOG_BUFFER_HEX(TAG, replBuff, 2);
       return false;
     }
@@ -87,7 +89,7 @@ bool check_for_data() {
                              1000 / portTICK_RATE_MS);
       outBuffLen = 0;
       ESP_LOGI(TAG, "got write request");
-      vTaskDelay(pdMS_TO_TICKS(200));
+      vTaskDelay(pdMS_TO_TICKS(SLAVE_REQUEST_WAIT_MS));
       return false;
     }
   }
