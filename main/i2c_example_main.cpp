@@ -1,35 +1,40 @@
 #include <stdio.h>
+#include <cstring>
 #include "driver/i2c.h"
 #include "esp_log.h"
+#include "esp_system.h"
 #include "sdkconfig.h"
 
-static const char *TAG = "i2c-example";
+static const char *TAG = "i2c-slave";
 
 #define DATA_LENGTH 512    /*!< Data buffer length of test buffer */
 #define RW_TEST_LENGTH 128 /*!< Data length for r/w test, [0,DATA_LENGTH] */
 #define DELAY_TIME_BETWEEN_ITEMS_MS \
-  10000 /*!< delay time between different test items */
+  20 /*!< delay time between different test items */
 
-#define I2C_SLAVE_SCL_IO GPIO_NUM_22
 #define I2C_SLAVE_SDA_IO GPIO_NUM_21
+#define I2C_SLAVE_SCL_IO GPIO_NUM_22
+
 #define I2C_SLAVE_NUM I2C_NUM_0
-#define I2C_SLAVE_TX_BUF_LEN (2 * DATA_LENGTH)
-#define I2C_SLAVE_RX_BUF_LEN (2 * DATA_LENGTH)
+#define I2C_SLAVE_TX_BUF_LEN 256  //(2 * DATA_LENGTH)
+#define I2C_SLAVE_RX_BUF_LEN 256  //(2 * DATA_LENGTH)
 
-#define I2C_MASTER_SCL_IO GPIO_NUM_19
-#define I2C_MASTER_SDA_IO GPIO_NUM_18
-#define I2C_MASTER_NUM I2C_NUM_1
-#define I2C_MASTER_FREQ_HZ 100000
-#define I2C_MASTER_TX_BUF_DISABLE 0 /*!< I2C master doesn't need buffer */
-#define I2C_MASTER_RX_BUF_DISABLE 0 /*!< I2C master doesn't need buffer */
-
-#define ESP_SLAVE_ADDR 0x28
+#define ESP_SLAVE_ADDR 0x04
 #define WRITE_BIT I2C_MASTER_WRITE /*!< I2C master write */
 #define READ_BIT I2C_MASTER_READ   /*!< I2C master read */
 #define ACK_CHECK_EN 0x1           /*!< I2C master will check ack from slave*/
 #define ACK_CHECK_DIS 0x0 /*!< I2C master will not check ack from slave */
 #define ACK_VAL 0x0       /*!< I2C ack value */
 #define NACK_VAL 0x1      /*!< I2C nack value */
+
+const uint8_t testCmd[10] = {0x00, 0x01, 0x02, 0x03, 0x04,
+                             0x05, 0x06, 0x07, 0x08, 0x09};
+
+uint8_t outBuff[256];
+uint16_t outBuffLen = 0;
+
+uint8_t inBuff[256];
+uint16_t inBuffLen = 0;
 
 extern "C" {
 void app_main(void);
@@ -53,46 +58,66 @@ static esp_err_t i2c_slave_init() {
                             I2C_SLAVE_RX_BUF_LEN, I2C_SLAVE_TX_BUF_LEN, 0);
 }
 
-/**
- * @brief test function to show buffer
- */
-static void disp_buf(uint8_t *buf, int len) {
-  int i;
-  for (i = 0; i < len; i++) {
-    printf("%02x ", buf[i]);
-    if ((i + 1) % 16 == 0) {
-      printf("\n");
+bool check_for_data() {
+  size_t size =
+      i2c_slave_read_buffer(I2C_SLAVE_NUM, inBuff, 256, 10 / portTICK_RATE_MS);
+  // ESP_LOGI(TAG, "len: %d", size);
+  if (size == 1) {
+    if (inBuff[0] == 0x01) {
+      uint8_t replBuff[2];
+      replBuff[0] = (uint8_t)(outBuffLen >> 0);
+      replBuff[1] = (uint8_t)(outBuffLen >> 8);
+      int ret = i2c_reset_tx_fifo(I2C_SLAVE_NUM);
+      if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "failed to reset fifo");
+      }
+      i2c_slave_write_buffer(I2C_SLAVE_NUM, replBuff, 2,
+                             1000 / portTICK_RATE_MS);
+      ESP_LOGI(TAG, "got len request, put(%d):", outBuffLen);
+      vTaskDelay(pdMS_TO_TICKS(200));
+      // ESP_LOG_BUFFER_HEX(TAG, replBuff, 2);
+      return false;
+    }
+    if (inBuff[0] == 0x02) {
+      int ret = i2c_reset_tx_fifo(I2C_SLAVE_NUM);
+      if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "failed to reset fifo");
+      }
+      i2c_slave_write_buffer(I2C_SLAVE_NUM, outBuff, outBuffLen,
+                             1000 / portTICK_RATE_MS);
+      outBuffLen = 0;
+      ESP_LOGI(TAG, "got write request");
+      vTaskDelay(pdMS_TO_TICKS(200));
+      return false;
     }
   }
-  printf("\n");
+  if (size > 1) {
+    inBuffLen = size;
+    return true;
+  }
+  return false;
 }
 
 static void i2cs_test_task(void *arg) {
-  uint32_t task_idx = (uint32_t)arg;
-  uint8_t *data = (uint8_t *)malloc(DATA_LENGTH);
-  int i = 0;
+  // uint32_t task_idx = (uint32_t)arg;
   while (1) {
-    for (i = 0; i < DATA_LENGTH; i++) {
-      data[i] = i;
+    if (check_for_data()) {
+      ESP_LOGI(TAG, "got data:");
+      ESP_LOG_BUFFER_HEX(TAG, inBuff, inBuffLen);
+      inBuffLen = 0;
     }
-    // i2c_reset_tx_fifo(I2C_SLAVE_NUM);
-    size_t d_size = i2c_slave_write_buffer(I2C_SLAVE_NUM, data, RW_TEST_LENGTH,
-                                           1000 / portTICK_RATE_MS);
-    printf("====TASK[%d] Slave write: [%d] bytes ====\n", task_idx, d_size);
-    disp_buf(data, d_size);
-
     vTaskDelay((DELAY_TIME_BETWEEN_ITEMS_MS) / portTICK_RATE_MS);
+  }
+  // vSemaphoreDelete(print_mux);
+  vTaskDelete(NULL);
+}
 
-    for (i = 0; i < DATA_LENGTH; i++) {
-      data[i] = 0x00;
-    }
-    size_t size = i2c_slave_read_buffer(I2C_SLAVE_NUM, data, RW_TEST_LENGTH,
-                                        1000 / portTICK_RATE_MS);
-
-    printf("----TASK[%d] Slave read: [%d] bytes ----\n", task_idx, size);
-    disp_buf(data, size);
-
-    vTaskDelay((DELAY_TIME_BETWEEN_ITEMS_MS) / portTICK_RATE_MS);
+static void send_task(void *arg) {
+  while (1) {
+    vTaskDelay((10000) / portTICK_RATE_MS);
+    memcpy(outBuff, testCmd, 10);
+    outBuffLen = 10;
+    ESP_LOGI(TAG, "new data ready for send");
   }
   // vSemaphoreDelete(print_mux);
   vTaskDelete(NULL);
@@ -103,4 +128,5 @@ void app_main() {
   ESP_ERROR_CHECK(i2c_slave_init());
 
   xTaskCreate(i2cs_test_task, "slave", 1024 * 2, (void *)1, 10, NULL);
+  xTaskCreate(send_task, "send_task", 1024 * 2, (void *)1, 10, NULL);
 }
