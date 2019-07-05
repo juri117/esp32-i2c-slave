@@ -27,10 +27,10 @@ static const char *TAG = "i2c-slave";
 #define ACK_VAL 0x0       /*!< I2C ack value */
 #define NACK_VAL 0x1      /*!< I2C nack value */
 
-#define SLAVE_REQUEST_WAIT_MS 80
+#define SLAVE_REQUEST_WAIT_MS 100
 
-const uint8_t testCmd[10] = {0x00, 0x01, 0x02, 0x03, 0x04,
-                             0x05, 0x06, 0x07, 0x08, 0x09};
+const uint8_t testCmd[15] = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+                             0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E};
 
 uint8_t outBuff[256];
 uint16_t outBuffLen = 0;
@@ -61,8 +61,10 @@ static esp_err_t i2c_slave_init() {
 }
 
 bool check_for_data() {
+  uint32_t startMs = esp_timer_get_time() / 1000;
   size_t size =
-      i2c_slave_read_buffer(I2C_SLAVE_NUM, inBuff, 256, 10 / portTICK_RATE_MS);
+      i2c_slave_read_buffer(I2C_SLAVE_NUM, inBuff, 1, 1000 / portTICK_RATE_MS);
+  uint32_t stopMs = esp_timer_get_time() / 1000;
   // ESP_LOGI(TAG, "len: %d", size);
   if (size == 1) {
     if (inBuff[0] == 0x01) {
@@ -75,7 +77,8 @@ bool check_for_data() {
       }
       i2c_slave_write_buffer(I2C_SLAVE_NUM, replBuff, 2,
                              1000 / portTICK_RATE_MS);
-      ESP_LOGI(TAG, "got len request, put(%d):", outBuffLen);
+      ESP_LOGI(TAG, "got len request, put(%d), waited: %d ms", outBuffLen,
+               stopMs - startMs);
       vTaskDelay(pdMS_TO_TICKS(SLAVE_REQUEST_WAIT_MS));
       // ESP_LOG_BUFFER_HEX(TAG, replBuff, 2);
       return false;
@@ -88,40 +91,62 @@ bool check_for_data() {
       i2c_slave_write_buffer(I2C_SLAVE_NUM, outBuff, outBuffLen,
                              1000 / portTICK_RATE_MS);
       outBuffLen = 0;
-      ESP_LOGI(TAG, "got write request");
+      ESP_LOGI(TAG, "got write request, waited: %d ms", stopMs - startMs);
       vTaskDelay(pdMS_TO_TICKS(SLAVE_REQUEST_WAIT_MS));
       return false;
     }
+    if (inBuff[0] > 0x02) {
+      vTaskDelay(pdMS_TO_TICKS(10));
+      size_t size_pl = i2c_slave_read_buffer(I2C_SLAVE_NUM, inBuff, inBuff[0],
+                                             20 / portTICK_RATE_MS);
+      inBuffLen = size_pl;
+      ESP_LOGI(TAG, "reading %d bytes, waited: %d ms", inBuff[0],
+               stopMs - startMs);
+      return true;
+    }
   }
   if (size > 1) {
+    ESP_LOGE(TAG, "weird, waited: %d ms", stopMs - startMs);
     inBuffLen = size;
     return true;
   }
+  ESP_LOGI(TAG, "nothing, len: %d, waited: %d ms", size, stopMs - startMs);
   return false;
 }
 
 static void i2cs_test_task(void *arg) {
-  // uint32_t task_idx = (uint32_t)arg;
   while (1) {
     if (check_for_data()) {
-      ESP_LOGI(TAG, "got data:");
+      ESP_LOGI(TAG, "got %d bytes:", inBuffLen);
       ESP_LOG_BUFFER_HEX(TAG, inBuff, inBuffLen);
       inBuffLen = 0;
     }
-    vTaskDelay((DELAY_TIME_BETWEEN_ITEMS_MS) / portTICK_RATE_MS);
+    // vTaskDelay((DELAY_TIME_BETWEEN_ITEMS_MS) / portTICK_RATE_MS);
   }
-  // vSemaphoreDelete(print_mux);
   vTaskDelete(NULL);
 }
 
 static void send_task(void *arg) {
   while (1) {
-    vTaskDelay((10000) / portTICK_RATE_MS);
-    memcpy(outBuff, testCmd, 10);
-    outBuffLen = 10;
+    vTaskDelay((500) / portTICK_RATE_MS);
+    memcpy(outBuff, testCmd, 15);
+    outBuffLen = 15;
     ESP_LOGI(TAG, "new data ready for send");
   }
-  // vSemaphoreDelete(print_mux);
+  vTaskDelete(NULL);
+}
+
+static void dummy_task(void *arg) {
+  while (1) {
+    vTaskDelay((80) / portTICK_RATE_MS);
+    float a = 5345.2340435;
+    float res = 2.;
+    for (int i = 0; i < 1000; i++) {
+      uint64_t t = esp_timer_get_time();
+      res = ((t / a) + i) / res;
+    }
+    ESP_LOGI(TAG, "do stuff: %f", res);
+  }
   vTaskDelete(NULL);
 }
 
@@ -131,4 +156,6 @@ void app_main() {
 
   xTaskCreate(i2cs_test_task, "slave", 1024 * 2, (void *)1, 10, NULL);
   xTaskCreate(send_task, "send_task", 1024 * 2, (void *)1, 10, NULL);
+  // this is just to generate some processor load and prints, to test stability of i2c
+  //xTaskCreate(dummy_task, "dummy_task", 1024 * 8, (void *)1, 15, NULL);
 }
